@@ -1,3 +1,7 @@
+# ---------------------------------------------------------------------------
+# 1. PREPARAÇÃO E LEITURA DOS DADOS
+# # ---------------------------------------------------------------------------
+
 import streamlit as st
 import pandas as pd
 import networkx as nx
@@ -13,7 +17,7 @@ st.title("Rotas Aeroporto")
 
 
 # ---------------------------------------------------------------------------
-# 1. Leitura da planilha
+# 2. Leitura dos Dados da Planilha e Pré-Visualização
 # ---------------------------------------------------------------------------
 
 arquivo = "aerportos_brasil.xlsx"
@@ -25,21 +29,37 @@ df = pd.read_excel(
     sheet_name="Planilha2"
 )
 
-
-# ---------------------------------------------------------------------------
-# 2. Visualização dos dados
-# ---------------------------------------------------------------------------
-
 st.write("Pré-visualização dos dados:")
 
+df_visualizacao = df.drop(
+    columns=[
+        "tipo_distancia",
+        "grafo"
+    ]
+).rename(
+    columns={
+        "origem_iata": "IATA Origem",
+        "origem_aeroporto": "Aeroporto de Origem",
+        "origem_cidade": "Cidade de Origem",
+        "origem_uf": "UF Origem",
+        "destino_iata": "IATA Destino",
+        "destino_aeroporto": "Aeroporto de Destino",
+        "destino_cidade": "Cidade de Destino",
+        "destino_uf": "UF Destino",
+        "distancia_km": "Distância (km)"
+    }
+)
+
 st.dataframe(
-    df.head(193),
-    use_container_width=True
+    df_visualizacao,
+    use_container_width=True,
+    height=500,
+    hide_index=True
 )
 
 
 # ---------------------------------------------------------------------------
-# 3. Construção do grafo
+# 3. CONSTRUÇÃO DO GRAFO DE ROTAS AÉREAS
 # ---------------------------------------------------------------------------
 
 col_origem = "origem_iata"
@@ -84,7 +104,7 @@ df_validos = df_validos[
 ]
 
 
-# Converte a distância para número
+# Converte a distância para float
 
 df_validos[col_peso] = df_validos[col_peso].astype(float)
 
@@ -136,6 +156,17 @@ cidades = sorted(
 
 
 # ---------------------------------------------------------------------------
+# MENSAGEM NA INTERFACE COM QUANTIDADE DE AEROPORTOS E CONEXÕES
+# ---------------------------------------------------------------------------
+
+st.success(
+    f"Grafo construído com "
+    f"{G.number_of_nodes()} aeroportos e "
+    f"{G.number_of_edges()} conexões."
+)
+
+
+# ---------------------------------------------------------------------------
 # 5. Escolha de origem e destino
 # ---------------------------------------------------------------------------
 
@@ -167,7 +198,7 @@ with col_b:
 
 
 calcular = st.button(
-    "Calcular menor rota",
+    "Calcular melhores escolhas",
     type="primary"
 )
 
@@ -178,149 +209,391 @@ calcular = st.button(
 
 if calcular:
 
-    if partida != chegada:
+    if partida == chegada:
 
-        # -------------------------------------------------------------------
-        # Encontra todos os aeroportos das cidades escolhidas
-        # -------------------------------------------------------------------
+        st.warning(
+            "Selecione cidades de origem e destino diferentes."
+        )
 
-        aeroportos_origem = [
-            aeroporto
-            for aeroporto, cidade in aeroporto_cidade.items()
-            if cidade == partida
-        ]
+        st.stop()
 
 
-        aeroportos_destino = [
-            aeroporto
-            for aeroporto, cidade in aeroporto_cidade.items()
-            if cidade == chegada
-        ]
+    # -----------------------------------------------------------------------
+    # Encontra todos os aeroportos das cidades escolhidas
+    # -----------------------------------------------------------------------
+
+    aeroportos_origem = [
+        aeroporto
+        for aeroporto, cidade in aeroporto_cidade.items()
+        if cidade == partida
+    ]
 
 
-        # -------------------------------------------------------------------
-        # Procura a menor rota entre todos os aeroportos possíveis
-        # -------------------------------------------------------------------
-
-        melhor_caminho = None
-        menor_custo = float("inf")
-
-
-        for aeroporto_origem in aeroportos_origem:
-
-            for aeroporto_destino in aeroportos_destino:
-
-                try:
-
-                    caminho = nx.dijkstra_path(
-                        G,
-                        aeroporto_origem,
-                        aeroporto_destino,
-                        weight="weight"
-                    )
+    aeroportos_destino = [
+        aeroporto
+        for aeroporto, cidade in aeroporto_cidade.items()
+        if cidade == chegada
+    ]
 
 
-                    custo = nx.dijkstra_path_length(
-                        G,
-                        aeroporto_origem,
-                        aeroporto_destino,
-                        weight="weight"
-                    )
+    # -----------------------------------------------------------------------
+    # 1. ROTA COM MENOR DISTÂNCIA
+    # -----------------------------------------------------------------------
+
+    melhor_caminho_distancia = None
+    menor_distancia = float("inf")
 
 
-                    if custo < menor_custo:
+    for aeroporto_origem in aeroportos_origem:
 
-                        menor_custo = custo
-                        melhor_caminho = caminho
+        for aeroporto_destino in aeroportos_destino:
 
+            try:
 
-                except nx.NetworkXNoPath:
-
-                    continue
-
-
-        # -------------------------------------------------------------------
-        # Resultado
-        # -------------------------------------------------------------------
-
-        if melhor_caminho is not None:
-
-            st.subheader("Resultado")
-
-
-            # Mostra a rota com cidade + aeroporto
-
-            rota_detalhada = []
-
-
-            for aeroporto in melhor_caminho:
-
-                cidade = aeroporto_cidade[aeroporto]
-
-                rota_detalhada.append(
-                    f"{cidade} ({aeroporto})"
+                caminho = nx.dijkstra_path(
+                    G,
+                    aeroporto_origem,
+                    aeroporto_destino,
+                    weight="weight"
                 )
 
 
-            st.markdown(
-                f"**Rota de menor custo:** "
-                f"{' → '.join(rota_detalhada)}"
+                distancia = nx.dijkstra_path_length(
+                    G,
+                    aeroporto_origem,
+                    aeroporto_destino,
+                    weight="weight"
+                )
+
+
+                if distancia < menor_distancia:
+
+                    menor_distancia = distancia
+                    melhor_caminho_distancia = caminho
+
+
+            except nx.NetworkXNoPath:
+
+                continue
+
+
+    # -----------------------------------------------------------------------
+    # 2. ROTA COM MENOR NÚMERO DE CONEXÕES
+    # -----------------------------------------------------------------------
+
+    melhor_caminho_conexoes = None
+    menor_numero_conexoes = float("inf")
+    menor_distancia_conexoes = float("inf")
+
+
+    for aeroporto_origem in aeroportos_origem:
+
+        for aeroporto_destino in aeroportos_destino:
+
+            try:
+
+                # Cada conexão recebe peso 1.
+                # Assim, o Dijkstra procura primeiro
+                # o caminho com a menor quantidade de conexões.
+
+                caminho = nx.dijkstra_path(
+                    G,
+                    aeroporto_origem,
+                    aeroporto_destino,
+                    weight=lambda u, v, d: 1
+                )
+
+
+                numero_conexoes = len(caminho) - 1
+
+
+                # Calcula a distância real da rota encontrada
+
+                distancia_rota = 0
+
+
+                for i in range(
+                    len(caminho) - 1
+                ):
+
+                    distancia_rota += G[
+                        caminho[i]
+                    ][
+                        caminho[i + 1]
+                    ]["weight"]
+
+
+                # Critério principal:
+                # menor número de conexões.
+                #
+                # Critério de desempate:
+                # menor distância entre as rotas
+                # que possuem o mesmo número de conexões.
+
+                if (
+                    numero_conexoes < menor_numero_conexoes
+                    or (
+                        numero_conexoes == menor_numero_conexoes
+                        and distancia_rota < menor_distancia_conexoes
+                    )
+                ):
+
+                    menor_numero_conexoes = numero_conexoes
+                    menor_distancia_conexoes = distancia_rota
+                    melhor_caminho_conexoes = caminho
+
+
+            except nx.NetworkXNoPath:
+
+                continue
+
+
+    # -----------------------------------------------------------------------
+    # Verifica se existe alguma rota
+    # -----------------------------------------------------------------------
+
+    if (
+        melhor_caminho_distancia is None
+        and melhor_caminho_conexoes is None
+    ):
+
+        st.error(
+            f"Não existe rota conectando "
+            f"{partida} a {chegada} no grafo."
+        )
+
+        st.stop()
+
+
+    # =======================================================================
+    # ROTA COM MENOR DISTÂNCIA
+    # =======================================================================
+
+    if melhor_caminho_distancia is not None:
+
+        st.markdown(
+            "### Rota com menor distância"
+        )
+
+
+        # ---------------------------------------------------------------
+        # Mostra cidade + aeroporto
+        # ---------------------------------------------------------------
+
+        rota_detalhada_distancia = []
+
+
+        for aeroporto in melhor_caminho_distancia:
+
+            cidade = aeroporto_cidade[aeroporto]
+
+            rota_detalhada_distancia.append(
+                f"{cidade} ({aeroporto})"
             )
 
 
-            st.markdown(
-                f"**Custo total:** {menor_custo:.2f}"
+        st.markdown(
+            f"{' → '.join(rota_detalhada_distancia)}"
+        )
+
+
+        st.markdown(
+            f"**Distância total:** "
+            f"{menor_distancia:.2f} km"
+        )
+
+
+        st.markdown(
+            f"**Número de conexões:** "
+            f"{len(melhor_caminho_distancia) - 1}"
+        )
+
+
+        st.markdown(
+            f"**Aeroportos utilizados:** "
+            f"{' → '.join(melhor_caminho_distancia)}"
+        )
+
+
+        # ---------------------------------------------------------------
+        # Detalhamento dos trechos
+        # ---------------------------------------------------------------
+
+        trechos_distancia = []
+
+
+        for i in range(
+            len(melhor_caminho_distancia) - 1
+        ):
+
+            aeroporto_origem = melhor_caminho_distancia[i]
+            aeroporto_destino = melhor_caminho_distancia[i + 1]
+
+            cidade_origem = aeroporto_cidade[
+                aeroporto_origem
+            ]
+
+            cidade_destino = aeroporto_cidade[
+                aeroporto_destino
+            ]
+
+
+            peso_trecho = G[
+                aeroporto_origem
+            ][
+                aeroporto_destino
+            ]["weight"]
+
+
+            trechos_distancia.append({
+
+                "De":
+                    f"{cidade_origem} ({aeroporto_origem})",
+
+                "Para":
+                    f"{cidade_destino} ({aeroporto_destino})",
+
+                "Distância (km)":
+                    f"{peso_trecho:.2f}"
+
+            })
+
+
+        st.table(
+            pd.DataFrame(trechos_distancia)
+        )
+
+
+    # =======================================================================
+    # ROTA COM MENOR NÚMERO DE CONEXÕES
+    # =======================================================================
+
+    if melhor_caminho_conexoes is not None:
+
+        st.markdown(
+            "### Rota com menor número de conexões"
+        )
+
+
+        # ---------------------------------------------------------------
+        # Mostra cidade + aeroporto
+        # ---------------------------------------------------------------
+
+        rota_detalhada_conexoes = []
+
+
+        for aeroporto in melhor_caminho_conexoes:
+
+            cidade = aeroporto_cidade[aeroporto]
+
+            rota_detalhada_conexoes.append(
+                f"{cidade} ({aeroporto})"
             )
 
 
-            # Mostra os aeroportos utilizados
+        st.markdown(
+            f"{' → '.join(rota_detalhada_conexoes)}"
+        )
 
-            st.markdown(
-                f"**Aeroportos utilizados:** "
-                f"{' → '.join(melhor_caminho)}"
+
+        st.markdown(
+            f"**Número de conexões:** "
+            f"{menor_numero_conexoes}"
+        )
+
+
+        # ---------------------------------------------------------------
+        # Calcula a distância dessa rota
+        # ---------------------------------------------------------------
+
+        distancia_rota_conexoes = 0
+
+
+        for i in range(
+            len(melhor_caminho_conexoes) - 1
+        ):
+
+            aeroporto_origem = melhor_caminho_conexoes[i]
+            aeroporto_destino = melhor_caminho_conexoes[i + 1]
+
+            distancia_rota_conexoes += G[
+                aeroporto_origem
+            ][
+                aeroporto_destino
+            ]["weight"]
+
+
+        st.markdown(
+            f"**Distância total:** "
+            f"{distancia_rota_conexoes:.2f} km"
+        )
+
+
+        # ---------------------------------------------------------------
+        # Detalhamento dos trechos
+        # ---------------------------------------------------------------
+
+        st.markdown(
+            f"**Aeroportos utilizados:** "
+            f"{' → '.join(melhor_caminho_conexoes)}"
+        )
+
+        trechos_conexoes = []
+
+
+        for i in range(
+            len(melhor_caminho_conexoes) - 1
+        ):
+
+            aeroporto_origem = melhor_caminho_conexoes[i]
+            aeroporto_destino = melhor_caminho_conexoes[i + 1]
+
+            cidade_origem = aeroporto_cidade[
+                aeroporto_origem
+            ]
+
+            cidade_destino = aeroporto_cidade[
+                aeroporto_destino
+            ]
+
+
+            peso_trecho = G[
+                aeroporto_origem
+            ][
+                aeroporto_destino
+            ]["weight"]
+
+
+            trechos_conexoes.append({
+
+                "De":
+                    f"{cidade_origem} ({aeroporto_origem})",
+
+                "Para":
+                    f"{cidade_destino} ({aeroporto_destino})",
+
+                "Distância (km)":
+                    f"{peso_trecho:.2f}"
+
+            })
+
+
+        st.table(
+            pd.DataFrame(trechos_conexoes)
+        )
+
+
+    # -----------------------------------------------------------------------
+    # 7. Visualização da rota com menor distância
+    # -----------------------------------------------------------------------
+    with st.expander(
+        "Ver grafo de menor distância (rota mais barata)"
+    ):
+        if melhor_caminho_distancia is not None:
+
+            st.subheader(
+                "Visualização do grafo de caminho mais barato"
             )
-
-
-            # ----------------------------------------------------------------
-            # Detalhamento dos trechos
-            # ----------------------------------------------------------------
-
-            trechos = []
-
-
-            for i in range(len(melhor_caminho) - 1):
-
-                aeroporto_origem = melhor_caminho[i]
-                aeroporto_destino = melhor_caminho[i + 1]
-
-                cidade_origem = aeroporto_cidade[aeroporto_origem]
-                cidade_destino = aeroporto_cidade[aeroporto_destino]
-
-
-                peso_trecho = G[
-                    aeroporto_origem
-                ][
-                    aeroporto_destino
-                ]["weight"]
-
-
-                trechos.append({
-                    "De": f"{cidade_origem} ({aeroporto_origem})",
-                    "Para": f"{cidade_destino} ({aeroporto_destino})",
-                    "Custo": peso_trecho
-                })
-
-
-            st.table(
-                pd.DataFrame(trechos)
-            )
-
-
-            # ----------------------------------------------------------------
-            # Visualização do grafo
-            # ----------------------------------------------------------------
-
-            st.subheader("Visualização do grafo")
 
 
             fig, ax = plt.subplots(
@@ -341,8 +614,8 @@ if calcular:
 
             arestas_caminho = list(
                 zip(
-                    melhor_caminho[:-1],
-                    melhor_caminho[1:]
+                    melhor_caminho_distancia[:-1],
+                    melhor_caminho_distancia[1:]
                 )
             )
 
@@ -361,9 +634,9 @@ if calcular:
             ]
 
 
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
             # Nós do grafo
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
 
             nx.draw_networkx_nodes(
                 G,
@@ -380,7 +653,7 @@ if calcular:
             nx.draw_networkx_nodes(
                 G,
                 pos,
-                nodelist=melhor_caminho,
+                nodelist=melhor_caminho_distancia,
                 ax=ax,
                 node_size=650,
                 node_color="#ff9999",
@@ -399,9 +672,9 @@ if calcular:
             )
 
 
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
             # Arestas que não fazem parte da rota
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
 
             nx.draw_networkx_edges(
                 G,
@@ -415,9 +688,9 @@ if calcular:
             )
 
 
-            # ----------------------------------------------------------------
-            # Arestas da menor rota
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
+            # Arestas da melhor rota
+            # -------------------------------------------------------------------
 
             nx.draw_networkx_edges(
                 G,
@@ -431,9 +704,9 @@ if calcular:
             )
 
 
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
             # Pesos das arestas
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
 
             pesos_caminho = {
                 e: G[e[0]][e[1]]["weight"]
@@ -451,13 +724,15 @@ if calcular:
             )
 
 
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
             # Título
-            # ----------------------------------------------------------------
+            # -------------------------------------------------------------------
 
             ax.set_title(
-                f"Menor rota: {partida} → {chegada} "
-                f"(custo total: {menor_custo:.2f})"
+                f"Rota mais barata: "
+                f"{partida} → {chegada} "
+                f"(distância total: "
+                f"{menor_distancia:.2f} km)"
             )
 
 
@@ -468,84 +743,244 @@ if calcular:
 
             plt.close(fig)
 
+    # -----------------------------------------------------------------------
+    # 8. Visualização da rota com menor número de conexões
+    # -----------------------------------------------------------------------
 
-            # ----------------------------------------------------------------
-            # Grafo completo
-            # ----------------------------------------------------------------
+    with st.expander(
+        "Ver grafo de menor número de conexões"
+    ):
 
-            with st.expander(
-                "Ver grafo completo (todos os aeroportos e conexões)"
-            ):
+        if melhor_caminho_conexoes is not None:
 
-                fig2, ax2 = plt.subplots(
-                    figsize=(10, 7)
+            st.subheader(
+                "Visualização do grafo com menor número de conexões"
+            )
+
+
+            fig3, ax3 = plt.subplots(
+                figsize=(10, 7)
+            )
+
+
+            # Cria a posição dos nós
+
+            pos3 = nx.spring_layout(
+                G,
+                seed=42,
+                k=0.7
+            )
+
+
+            # Arestas da rota com menor número de conexões
+
+            arestas_conexoes = list(
+                zip(
+                    melhor_caminho_conexoes[:-1],
+                    melhor_caminho_conexoes[1:]
                 )
+            )
 
 
-                # Posição dos nós
-
-                pos2 = nx.spring_layout(
-                    G,
-                    seed=42,
-                    k=0.7
-                )
+            arestas_conexoes_set = set(
+                arestas_conexoes
+            )
 
 
-                # Nós
+            # Outras arestas
 
-                nx.draw_networkx_nodes(
-                    G,
-                    pos2,
-                    ax=ax2,
-                    node_size=450,
-                    node_color="#cfe2f3",
-                    edgecolors="#333333"
-                )
+            outras_arestas_conexoes = [
+                e
+                for e in G.edges()
+                if e not in arestas_conexoes_set
+            ]
 
 
-                # Nomes
+            # -------------------------------------------------------------------
+            # Nós do grafo
+            # -------------------------------------------------------------------
 
-                nx.draw_networkx_labels(
-                    G,
-                    pos2,
-                    ax=ax2,
-                    font_size=7
-                )
-
-
-                # Arestas
-
-                nx.draw_networkx_edges(
-                    G,
-                    pos2,
-                    ax=ax2,
-                    edge_color="#999999",
-                    width=0.8,
-                    arrows=grafo_dirigido,
-                    arrowsize=6
-                )
+            nx.draw_networkx_nodes(
+                G,
+                pos3,
+                ax=ax3,
+                node_size=550,
+                node_color="#cfe2f3",
+                edgecolors="#333333"
+            )
 
 
-                # Pesos de todas as arestas
+            # Destaca os aeroportos utilizados
 
-                edge_labels_all = nx.get_edge_attributes(
-                    G,
-                    "weight"
-                )
-
-
-                nx.draw_networkx_edge_labels(
-                    G,
-                    pos2,
-                    edge_labels=edge_labels_all,
-                    ax=ax2,
-                    font_size=6
-                )
+            nx.draw_networkx_nodes(
+                G,
+                pos3,
+                nodelist=melhor_caminho_conexoes,
+                ax=ax3,
+                node_size=650,
+                node_color="#ff9999",
+                edgecolors="#990000"
+            )
 
 
-                ax2.axis("off")
+            # Nomes dos aeroportos
+
+            nx.draw_networkx_labels(
+                G,
+                pos3,
+                ax=ax3,
+                font_size=8,
+                font_weight="bold"
+            )
+            
+
+            # -------------------------------------------------------------------
+            # Arestas que não fazem parte da rota
+            # -------------------------------------------------------------------
+
+            nx.draw_networkx_edges(
+                G,
+                pos3,
+                edgelist=outras_arestas_conexoes,
+                ax=ax3,
+                edge_color="#cccccc",
+                width=0.8,
+                arrows=grafo_dirigido,
+                arrowsize=8
+            )
 
 
-                st.pyplot(fig2)
+            # -------------------------------------------------------------------
+            # Arestas da melhor rota
+            # -------------------------------------------------------------------
 
-                plt.close(fig2)
+            nx.draw_networkx_edges(
+                G,
+                pos3,
+                edgelist=arestas_conexoes,
+                ax=ax3,
+                edge_color="#cc0000",
+                width=3,
+                arrows=grafo_dirigido,
+                arrowsize=15
+            )
+
+
+            # -------------------------------------------------------------------
+            # Pesos das arestas
+            # -------------------------------------------------------------------
+
+            pesos_conexoes = {
+                e: G[e[0]][e[1]]["weight"]
+                for e in arestas_conexoes
+            }
+
+
+            nx.draw_networkx_edge_labels(
+                G,
+                pos3,
+                edge_labels=pesos_conexoes,
+                ax=ax3,
+                font_size=8,
+                font_color="#990000"
+            )
+
+
+            # -------------------------------------------------------------------
+            # Título
+            # -------------------------------------------------------------------
+
+            ax3.set_title(
+                f"Rota com menor número de conexões: "
+                f"{partida} → {chegada} "
+                f"({menor_numero_conexoes} conexões)"
+            )
+
+
+            ax3.axis("off")
+
+
+            st.pyplot(fig3)
+
+            plt.close(fig3)
+
+    # -----------------------------------------------------------------------
+    # 9. Grafo completo
+    # -----------------------------------------------------------------------
+
+    with st.expander(
+        "Ver grafo completo (todos os aeroportos e conexões)"
+    ):
+
+        fig2, ax2 = plt.subplots(
+            figsize=(10, 7)
+        )
+
+
+        # Posição dos nós
+
+        pos2 = nx.spring_layout(
+            G,
+            seed=42,
+            k=0.7
+        )
+
+
+        # Nós
+
+        nx.draw_networkx_nodes(
+            G,
+            pos2,
+            ax=ax2,
+            node_size=450,
+            node_color="#cfe2f3",
+            edgecolors="#333333"
+        )
+
+
+        # Nomes
+
+        nx.draw_networkx_labels(
+            G,
+            pos2,
+            ax=ax2,
+            font_size=7
+        )
+
+
+        # Arestas
+
+        nx.draw_networkx_edges(
+            G,
+            pos2,
+            ax=ax2,
+            edge_color="#999999",
+            width=0.8,
+            arrows=grafo_dirigido,
+            arrowsize=6
+        )
+
+
+        # Pesos de todas as arestas
+
+        edge_labels_all = nx.get_edge_attributes(
+            G,
+            "weight"
+        )
+
+
+        nx.draw_networkx_edge_labels(
+            G,
+            pos2,
+            edge_labels=edge_labels_all,
+            ax=ax2,
+            font_size=6
+        )
+
+
+        ax2.axis("off")
+
+
+        st.pyplot(fig2)
+
+        plt.close(fig2)
